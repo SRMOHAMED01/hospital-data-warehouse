@@ -1,0 +1,87 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      # Validation Backend Python
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Backend Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r etl/requirements.txt
+
+      - name: Check Backend Syntax (Linter)
+        run: |
+          # Valider la syntaxe des fichiers Python
+          python -m py_compile etl/etl.py etl/api.py
+
+      # Validation Frontend React
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Build Frontend
+        run: |
+          cd frontend
+          # Définir l'URL API par défaut pour le build de test
+          VITE_API_URL=http://localhost:8001 npm run build
+
+  build-docker-images:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      # Construction locale des images pour valider que les Dockerfiles fonctionnent
+      - name: Build ETL Image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./etl
+          file: ./etl/Dockerfile
+          push: false
+          tags: hospital-etl:latest
+
+      - name: Build API Image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./etl
+          file: ./etl/Dockerfile # l'API utilise le même build context et Dockerfile
+          push: false
+          tags: hospital-api:latest
+
+      - name: Build Frontend Image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          build-args: |
+            VITE_API_URL=http://localhost:8001
+          push: false
+          tags: hospital-frontend:latest
